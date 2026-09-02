@@ -1,3 +1,9 @@
+# Moved
+
+This repository moved to https://github.com/sainzs/agent-workbench/tree/main/packages/cinta. History was preserved via subtree, and this repository is frozen at its last version. Install with the unchanged npm package: `pi install npm:@ssainzs/cinta`.
+
+---
+
 # cinta
 
 [![npm](https://img.shields.io/npm/v/@ssainzs/cinta?color=00ffb2&label=npm)](https://www.npmjs.com/package/@ssainzs/cinta) [![pi](https://img.shields.io/badge/pi-extension-black)](https://github.com/sainzs/cinta)
