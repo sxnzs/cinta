@@ -1,17 +1,21 @@
 /**
  * Cinta core: turn a terminal script into an animated GIF.
  *
- * Harness-agnostic — the pi extension wraps this, but it can be driven from
- * any Node host (including an OpenCode plugin later). Requires Chrome (found
- * automatically or via chromePath) and ffmpeg on PATH.
+ * Harness-agnostic — the pi extension and the CLI both wrap this. Requires
+ * Chrome (found automatically or via chromePath) and ffmpeg on PATH.
+ *
+ * Frames are captured by seeking a deterministic timeline (timeline.mjs), not
+ * by sleeping between screenshots: pacing is exact, runs are reproducible, and
+ * identical frames collapse into one longer GIF frame.
  */
 import { spawn } from "node:child_process";
 import { accessSync } from "node:fs";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import puppeteer from "puppeteer-core";
+import { DEFAULT_TIMING, framePlan, layout, snapshot } from "./timeline.mjs";
 
 export const DEFAULTS = {
   fps: 12,
@@ -29,18 +33,21 @@ export const DEFAULTS = {
     border: "#16181a",
     bar: "#101013",
   },
-  timing: { typeMs: 34, lineMs: 90, afterCmdMs: 260, endHoldMs: 1600 },
+  timing: DEFAULT_TIMING,
 };
 
 export function findChrome() {
   const candidates = [
+    process.env.CINTA_CHROME_PATH,
     process.env.CHROME_PATH,
     process.env.CHROMIUM_PATH,
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
     "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
     "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
   ].filter(Boolean);
   for (const c of candidates) {
     try {
@@ -53,74 +60,83 @@ export function findChrome() {
   return undefined;
 }
 
-function buildHtml(script, opts) {
-  const c = { ...DEFAULTS.colors, ...(opts.colors ?? {}) };
-  const t = { ...DEFAULTS.timing, ...(opts.timing ?? {}) };
-  const font = opts.font ?? DEFAULTS.font;
-  // Escape interpolated strings. `sub` may carry intended <b>/<i> formatting,
-  // so escape everything, then re-allow a small set of formatting tags.
-  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const escSub = (s) =>
-    String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/&lt;(\/?)(b|i|em|strong|code)&gt;/g, "<$1$2>");
-  const subHtml = (opts.sub ?? []).map(escSub).join("<br />");
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box}html,body{margin:0;padding:0;background:${c.bg}}
-body{font-family:${font};color:${c.ink};padding:48px 56px;-webkit-font-smoothing:antialiased}
+// Colors and the font land inside <style>; refuse anything that could close it.
+function cssValue(name, value) {
+  const s = String(value);
+  if (/[<>{};]/.test(s)) throw new Error(`${name}: invalid CSS value ${JSON.stringify(s)}`);
+  return s;
+}
+
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// `sub` may carry intended <b>/<i> formatting: escape everything, then re-allow a few tags.
+const escSub = (s) => esc(s).replace(/&lt;(\/?)(b|i|em|strong|code)&gt;/g, "<$1$2>");
+
+/**
+ * The capture page, also written next to every GIF as its regenerable source.
+ * Opened directly in a browser it loops the animation on its own; the recorder
+ * loads it with ?capture and drives `__cinta.seek(ms)` frame by frame.
+ */
+export function buildHtml(timeline, opts = {}) {
+  const c = Object.fromEntries(
+    Object.entries({ ...DEFAULTS.colors, ...(opts.colors ?? {}) }).map(([k, v]) => [k, cssValue(`colors.${k}`, v)]),
+  );
+  const font = cssValue("font", opts.font ?? DEFAULTS.font);
+  const title = opts.title ?? opts.name ?? "";
+  const header = opts.name || opts.tag
+    ? `<div class="wordmark"><span class="name">${esc(opts.name ?? "")}</span><span class="tag">${esc(opts.tag ?? "")}</span></div>`
+    : "";
+  const sub = opts.sub?.length ? `<div class="sub">${opts.sub.map(escSub).join("<br />")}</div>` : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title || "cinta")}</title><style>
+*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;background:${c.bg}}
+body{display:flex;flex-direction:column;font-family:${font};color:${c.ink};padding:48px 56px;-webkit-font-smoothing:antialiased;overflow:hidden}
 .wordmark{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
 .wordmark .name{font-size:28px;font-weight:700;letter-spacing:-.5px}
 .wordmark .tag{color:${c.accent};font-size:13px;font-weight:600}
-.sub{color:${c.dim};font-size:14px;margin-bottom:28px;line-height:1.5}
+.sub{color:${c.dim};font-size:14px;line-height:1.5}
 .sub b{color:${c.ink};font-weight:600}
-.term{background:${c.panel};border:1px solid ${c.border};border-radius:12px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6);width:880px}
+.term{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:28px;background:${c.panel};border:1px solid ${c.border};border-radius:12px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.wordmark+.term{margin-top:20px}body>.term:first-child{margin-top:0}
 .term-bar{display:flex;align-items:center;gap:8px;padding:12px 16px;background:${c.bar};border-bottom:1px solid ${c.border}}
 .dot{width:11px;height:11px;border-radius:50%}.dot.r{background:#ff5f57}.dot.y{background:#febc2e}.dot.g{background:#28c840}
 .term-title{margin-left:10px;color:${c.faint};font-size:12px}
-.term-body{padding:20px 22px 24px;font-size:13.5px;line-height:1.55;min-height:360px}
-.p{color:${c.accent};font-weight:700}.cmd{color:${c.ink}}.out{color:${c.dim};white-space:pre-wrap}.ok{color:${c.accent}}.hl{color:${c.ink}}
+.term-body{flex:1;min-height:0;overflow:hidden;padding:20px 22px 24px;font-size:13.5px;line-height:1.55}
+.p{color:${c.accent};font-weight:700}.cmd{color:${c.ink}}.out{color:${c.dim};white-space:pre-wrap}.ok{color:${c.accent}}
 .line{display:block}.cursor{display:inline-block;width:8px;height:16px;background:${c.accent};vertical-align:-2px}
-.cursor.blink{animation:blink 1.1s steps(1) infinite}@keyframes blink{50%{opacity:0}}.gap{height:14px}
+.cursor.off{visibility:hidden}.gap{height:14px}
 </style></head><body>
-<div class="wordmark"><span class="name">${esc(opts.name ?? "")}</span><span class="tag">${esc(opts.tag ?? "")}</span></div>
-<div class="sub">${subHtml}</div>
-<div class="term"><div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">${esc(opts.title ?? opts.name ?? "")}</span></div>
+${header}${sub}
+<div class="term"><div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">${esc(title)}</span></div>
 <div class="term-body" id="body"></div></div>
 <script>
+const TIMELINE=${JSON.stringify(timeline).replace(/</g, "\\u003c")};
+const snapshot=${snapshot.toString()};
 const body=document.getElementById("body");
-const SCRIPT=${JSON.stringify(script).replace(/</g, "\\u003c")};
-const TYPE_MS=${t.typeMs},LINE_MS=${t.lineMs},AFTER_CMD=${t.afterCmdMs},END_HOLD=${t.endHoldMs};
-let cursor=null;
-const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
-const escH=(s)=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
-function newCursor(b){const c=document.createElement("span");c.className="cursor"+(b?" blink":"");return c;}
-async function typeCommand(text){const line=document.createElement("div");line.innerHTML='<span class="p">$</span> <span class="cmd"></span>';const cs=line.querySelector(".cmd");body.appendChild(line);cursor=newCursor(false);line.appendChild(cursor);for(const ch of String(text)){cs.textContent+=ch;line.appendChild(cursor);await wait(TYPE_MS);}await wait(AFTER_CMD);cursor.remove();}
-async function showOut(t2,cls){const line=document.createElement("div");line.innerHTML='<span class="out '+(cls||"")+'">'+escH(t2)+"</span>";body.appendChild(line);}
-async function streamLines(lines){const box=document.createElement("div");box.className="out";body.appendChild(box);for(const ln of lines){const s=document.createElement("span");s.className="line";s.textContent=ln;box.appendChild(s);await wait(LINE_MS);}}
-function addGap(){const g=document.createElement("div");g.className="gap";body.appendChild(g);}
-async function run(){for(const st of SCRIPT){if(st.type==="cmd")await typeCommand(st.text);else if(st.type==="out")await showOut(st.text,st.cls);else if(st.type==="stream")await streamLines(st.lines);else if(st.type==="gap")addGap();else if(st.type==="done"){const p=document.createElement("div");p.innerHTML='<span class="p">▊</span>';cursor=newCursor(true);p.appendChild(cursor);body.appendChild(p);}}await wait(END_HOLD);window.__done=true;}
-run();
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
+function cursor(on){return el("span","cursor"+(on?"":" off"));}
+function paint(rows){
+  body.replaceChildren(...rows.map((r)=>{
+    if(r.k==="cmd"){const d=el("div");d.append(el("span","p","$")," ",el("span","cmd",r.text));if(r.cursor)d.append(cursor(true));return d;}
+    if(r.k==="out"){const d=el("div");d.append(el("span","out "+r.cls,r.text));return d;}
+    if(r.k==="stream"){const d=el("div","out");for(const l of r.lines)d.append(el("span","line",l));return d;}
+    if(r.k==="gap")return el("div","gap");
+    const d=el("div");d.append(el("span","p","▊"),cursor(r.cursor));return d;
+  }));
+  body.scrollTop=body.scrollHeight;
+}
+window.__cinta={seek:(ms)=>paint(snapshot(TIMELINE,ms)),totalMs:TIMELINE.totalMs};
+if(new URLSearchParams(location.search).has("capture"))__cinta.seek(0);
+else{const t0=performance.now();const loop=(now)=>{__cinta.seek((now-t0)%TIMELINE.totalMs);requestAnimationFrame(loop);};requestAnimationFrame(loop);}
 </script></body></html>`;
 }
 
-function estimateMs(script, timing) {
-  let ms = timing.endHoldMs + 800;
-  for (const st of script) {
-    if (st.type === "cmd") ms += String(st.text).length * timing.typeMs + timing.afterCmdMs;
-    else if (st.type === "stream") ms += st.lines.length * timing.lineMs;
-    else if (st.type === "out") ms += 60;
-  }
-  return Math.max(2500, ms);
-}
-
-function run(cmd, args) {
+function run(cmd, args, signal) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], signal });
     let err = "";
     child.stderr.on("data", (d) => (err += d));
-    child.on("error", rejectPromise);
+    child.on("error", (e) =>
+      rejectPromise(e.code === "ENOENT" ? new Error(`${cmd} not found on PATH — install it (brew install ${cmd})`) : e),
+    );
     child.on("close", (code) =>
       code === 0 ? resolvePromise() : rejectPromise(new Error(`${cmd} exited ${code}: ${err.slice(-400)}`)),
     );
@@ -129,23 +145,24 @@ function run(cmd, args) {
 
 /**
  * Render a terminal script to an animated GIF.
- * Returns { gif, html, frames, width, height, bytes }.
+ * Returns { gif, html, frames, durationMs, width, height, bytes }.
  */
 export async function renderGif(script, options = {}) {
-  if (!Array.isArray(script) || script.length === 0) {
-    throw new Error("script must be a non-empty array of steps");
-  }
   const fps = options.fps ?? DEFAULTS.fps;
   const scale = options.scale ?? DEFAULTS.scale;
   const width = options.width ?? DEFAULTS.width;
   const height = options.height ?? DEFAULTS.height;
-  const timing = { ...DEFAULTS.timing, ...(options.timing ?? {}) };
   const out = options.out ?? "cinta.gif";
+  const signal = options.signal;
+  signal?.throwIfAborted();
+
+  const timeline = layout(script, options.timing);
+  const html = buildHtml(timeline, options);
+  const plan = framePlan(timeline, fps);
 
   const chromePath = options.chromePath ?? findChrome();
-  if (!chromePath) throw new Error("Chrome not found — install Chrome or pass chromePath");
+  if (!chromePath) throw new Error("Chrome not found — install Chrome or set CINTA_CHROME_PATH");
 
-  const html = buildHtml(script, { ...options, timing });
   const dir = await mkdtemp(join(tmpdir(), "cinta-"));
   const browser = await puppeteer.launch({
     executablePath: chromePath,
@@ -155,32 +172,51 @@ export async function renderGif(script, options = {}) {
   try {
     const page = await browser.newPage();
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
-    const htmlPath = join(dir, "hero.html");
+    const htmlPath = join(dir, "page.html");
     await writeFile(htmlPath, html);
-    await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "networkidle0" });
+    await page.goto(`${pathToFileURL(htmlPath).href}?capture`, { waitUntil: "load" });
     await page.evaluate(() => document.fonts.ready);
 
-    const totalMs = estimateMs(script, timing);
-    const frames = Math.ceil((totalMs / 1000) * fps);
-    const interval = 1000 / fps;
-    for (let i = 0; i < frames; i++) {
-      await writeFile(join(dir, `f${String(i).padStart(4, "0")}.png`), await page.screenshot({ type: "png" }));
-      await new Promise((r) => setTimeout(r, interval));
+    // GIF delays are whole centiseconds; place each frame on the centisecond
+    // grid by its absolute start so rounding never accumulates into drift.
+    const cs = (ms) => Math.round(ms / 10);
+    const list = ["ffconcat version 1.0"];
+    for (let i = 0; i < plan.length; i++) {
+      signal?.throwIfAborted();
+      await page.evaluate((ms) => window.__cinta.seek(ms), plan[i].ms);
+      const file = `f${String(i).padStart(4, "0")}.png`;
+      await writeFile(join(dir, file), await page.screenshot({ type: "png" }));
+      const end = i + 1 < plan.length ? plan[i + 1].ms : timeline.totalMs;
+      // framerate 100 gives each still a 1/100s timebase; the image default (25fps) would snap delays to 40ms.
+      list.push(`file '${file}'`, "option framerate 100", `duration ${(Math.max(1, cs(end) - cs(plan[i].ms)) / 100).toFixed(2)}`);
     }
-    const finished = await page.evaluate(() => window.__done === true);
-    if (!finished) throw new Error("animation did not complete within the recorded frame budget");
+    // The concat demuxer ignores the last entry's duration unless it is repeated.
+    list.push(list.at(-3), list.at(-2));
+    const listPath = join(dir, "frames.ffconcat");
+    await writeFile(listPath, list.join("\n") + "\n");
 
-    const palette = join(dir, "palette.png");
-    const vf = `fps=${fps},scale=${scale}:-1:flags=lanczos`;
-    await run("ffmpeg", ["-y", "-framerate", String(fps), "-i", join(dir, "f%04d.png"), "-vf", `${vf},palettegen=max_colors=128:stats_mode=diff`, palette]);
-    await run("ffmpeg", ["-y", "-framerate", String(fps), "-i", join(dir, "f%04d.png"), "-i", palette, "-lavfi", `${vf} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=4`, out]);
+    const vf =
+      `scale=${scale}:-1:flags=lanczos,split[a][b];` +
+      `[a]palettegen=max_colors=128:stats_mode=diff[p];` +
+      `[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`;
+    await mkdir(dirname(out), { recursive: true });
+    await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-filter_complex", vf, "-fps_mode", "vfr", "-loop", "0", out], signal);
 
     const htmlOut = join(dirname(out), `${basename(out).replace(/\.gif$/i, "")}.html`);
     await writeFile(htmlOut, html);
     const s = await stat(out);
-    return { gif: out, html: htmlOut, frames, width: scale, height: Math.round((scale * height) / width), bytes: s.size };
+    return {
+      gif: out,
+      html: htmlOut,
+      frames: plan.length,
+      durationMs: Math.round(timeline.totalMs),
+      width: scale,
+      height: Math.round((scale * height) / width),
+      bytes: s.size,
+    };
   } finally {
     await browser.close().catch(() => {});
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
+

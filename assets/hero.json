@@ -1,0 +1,27 @@
+{
+  "name": "cinta",
+  "tag": "animated terminal gifs for docs",
+  "title": "cinta",
+  "sub": [
+    "Self-typing terminal captures, in your colors and font.",
+    "A pi tool and a CLI · headless Chrome + <b>ffmpeg</b>, fully local."
+  ],
+  "script": [
+    { "type": "cmd", "text": "cat demo.json" },
+    {
+      "type": "stream",
+      "lines": [
+        "[",
+        "  { \"type\": \"cmd\", \"text\": \"npm test\" },",
+        "  { \"type\": \"out\", \"text\": \"✓ 15 passing\", \"cls\": \"ok\" },",
+        "  { \"type\": \"done\" }",
+        "]"
+      ]
+    },
+    { "type": "gap" },
+    { "type": "cmd", "text": "cinta demo.json -o demo.gif" },
+    { "type": "out", "text": "demo.gif  2.1s · 7 frames · 880×559 · 13KB", "cls": "ok" },
+    { "type": "out", "text": "demo.html  (regenerable source; open it to watch the animation live)" },
+    { "type": "done" }
+  ]
+}

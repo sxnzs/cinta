@@ -1,8 +1,11 @@
 {
   "name": "@ssainzs/cinta",
-  "version": "0.1.2",
-  "description": "Animated terminal-capture GIFs for documentation — a pi extension",
+  "version": "0.2.0",
+  "description": "Animated terminal-capture GIFs for documentation — a pi extension and CLI",
   "type": "module",
+  "bin": {
+    "cinta": "./src/cli.mjs"
+  },
   "pi": {
     "extensions": [
       "./src/index.ts"
@@ -14,10 +17,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "verify": "tsc --noEmit && node --check src/render.mjs && node --check src/cli.mjs && node --test"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "keywords": [
     "pi-package",
@@ -26,12 +31,13 @@
     "gif",
     "screencast",
     "asciicast",
-    "documentation"
+    "documentation",
+    "cli"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sainzs/cinta"
+    "url": "git+https://github.com/sxnzs/cinta.git"
   },
   "dependencies": {
     "puppeteer-core": "^25.8.0"
@@ -40,11 +46,23 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*"
   },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^24.0.0",
     "typebox": "^1.0.0",
     "typescript": "^5.9.0"
+  },
+  "homepage": "https://github.com/sxnzs/cinta#readme",
+  "bugs": {
+    "url": "https://github.com/sxnzs/cinta/issues"
   }
 }

@@ -1,44 +1,35 @@
-# Moved
-
-This repository moved to https://github.com/sainzs/agent-workbench/tree/main/packages/cinta. History was preserved via subtree, and this repository is frozen at its last version. Install with the unchanged npm package: `pi install npm:@ssainzs/cinta`.
-
----
-
 # cinta
 
-[![npm](https://img.shields.io/npm/v/@ssainzs/cinta?color=00ffb2&label=npm)](https://www.npmjs.com/package/@ssainzs/cinta) [![pi](https://img.shields.io/badge/pi-extension-black)](https://github.com/sainzs/cinta)
+[![npm](https://img.shields.io/npm/v/@ssainzs/cinta?color=00ffb2&label=npm)](https://www.npmjs.com/package/@ssainzs/cinta) [![pi](https://img.shields.io/badge/pi-extension-black)](https://github.com/sxnzs/cinta)
 
-Animated terminal-capture GIFs for documentation — from inside pi. The agent
-writes the terminal script conversationally, you get a self-typing GIF in your
-colors and font.
+Animated terminal-capture GIFs for documentation — from inside pi, or from the
+command line. You (or the agent) write a short terminal script; you get a
+self-typing GIF in your colors and font.
 
-![cinta recording a terminal session](./assets/hero.gif)
+![cinta rendering a demo GIF](./assets/hero.gif)
 
 ## Install
 
+As a pi extension:
+
 ```bash
-pi install npm:@ssainzs/cinta  # or pi install git:github.com/sainzs/cinta
+pi install git:github.com/sxnzs/cinta   # latest
+pi install npm:@ssainzs/cinta           # npm release (0.1.0 until 0.2.0 ships)
 ```
 
-Requires Chrome (`brew install --cask google-chrome`) and `ffmpeg`
-(`brew install ffmpeg`). No API keys, no accounts — Chrome runs headless
-locally and the GIF never leaves your machine.
+As a CLI, without pi:
 
-## What it does
+```bash
+npx github:sxnzs/cinta demo.json -o demo.gif
+```
 
-- Adds a `cinta` tool the agent calls with a terminal script (commands, output,
-  streamed lines)
-- Renders the script as a self-typing terminal session — Berkeley Mono Variable,
-  pure black `#000000`, mint `#00ffb2` (all overridable)
-- Records it frame-by-frame in headless Chrome and assembles an optimized,
-  infinite-loop GIF with ffmpeg
-- Adds `/cinta <text>` so you can ask for a GIF without waiting for the agent
-  to decide
-- Writes `hero.html` (the regenerable source) next to every GIF
+Requires Chrome (`brew install --cask google-chrome`, or set
+`CINTA_CHROME_PATH`) and ffmpeg 5.1+ (`brew install ffmpeg`). No API keys, no
+accounts — Chrome runs headless locally and the GIF never leaves your machine.
 
 ## Usage
 
-Ask for one in conversation:
+In pi, ask in conversation:
 
 ```text
 make a cinta GIF of the install command and the model list, save to assets/
@@ -47,39 +38,65 @@ make a cinta GIF of the install command and the model list, save to assets/
 or drive it directly:
 
 ```text
-/cinta npm test passing, all 41 tests green
+/cinta npm test passing, all tests green
 ```
 
-The tool's script vocabulary:
+From the shell, pass a script array — or an object with `script` plus any
+option below:
+
+```bash
+cinta demo.json -o assets/demo.gif
+echo '[{"type":"cmd","text":"ls"},{"type":"done"}]' | cinta - -o ls.gif
+```
+
+Every GIF gets a sibling `.html`: the regenerable source, which also plays the
+animation live when opened in a browser.
+
+## Script
 
 | Step | Shape | Renders as |
 |------|-------|------------|
 | `cmd` | `{ "type": "cmd", "text": "npm test" }` | typed character-by-character after a `$` |
-| `out` | `{ "type": "out", "text": "…", "cls": "ok" }` | one output block (`ok` = mint) |
+| `out` | `{ "type": "out", "text": "…", "cls": "ok" }` | one output block (`ok` = accent) |
 | `stream` | `{ "type": "stream", "lines": ["…"] }` | lines appearing one at a time |
 | `gap` | `{ "type": "gap" }` | vertical breathing room |
-| `done` | `{ "type": "done" }` | final mint block + blinking cursor |
+| `pause` | `{ "type": "pause", "ms": 800 }` | holds the current frame |
+| `done` | `{ "type": "done" }` | final accent block + blinking cursor |
+
+Output longer than the window scrolls, like a real terminal.
 
 ## Options
 
-`width`, `height`, `fps` (default 12), `scale` (default 880px wide), plus
-`colors` and `font` overrides. Timing constants (`typeMs`, `lineMs`,
-`afterCmdMs`, `endHoldMs`) tune the pacing.
+| Option | Default | |
+|--------|---------|---|
+| `name`, `tag`, `sub` | — | wordmark, accent tag, and subtitle lines (`<b>`/`<i>`/`<code>` allowed) above the window; omitted when empty |
+| `title` | `name` | terminal window title |
+| `width` × `height` | 1008 × 640 | capture viewport, px |
+| `scale` | 880 | output GIF width, px |
+| `fps` | 12 | capture rate |
+| `font` | Berkeley Mono → `ui-monospace` → Menlo | CSS font stack |
+| `colors` | black `#000000`, mint `#00ffb2` | `bg`, `panel`, `ink`, `dim`, `faint`, `accent`, `border`, `bar` |
+| `timing` | 34 / 90 / 260 / 1600 | `typeMs`, `lineMs`, `afterCmdMs`, `endHoldMs` |
 
 ## How it works
 
-The script is replayed in a styled HTML page (not a real terminal — that's what
-makes it deterministic and stylable), screenshotted per frame by headless
-Chrome, and assembled into a GIF with a two-pass ffmpeg palette. Same approach
-as the `augment-ai-provider` hero, packaged as a tool.
+The script becomes a timeline — a pure function from milliseconds to what the
+terminal shows. Headless Chrome renders a styled HTML terminal (not a real one:
+that is what makes it deterministic and stylable), and cinta seeks it to each
+frame's exact time instead of recording in real time. Consecutive identical
+frames merge into one longer GIF frame, and ffmpeg builds the GIF with a
+single-pass palette. Pacing is exact to the centisecond, renders are
+reproducible, and holds cost almost nothing in file size.
 
-## In production
+## Development
 
-Used to generate the README heroes for [badname](https://github.com/sainzs/badname),
-[reckoner](https://github.com/sainzs/reckoner), [registro](https://github.com/sainzs/registro),
-[opencode-anthropic-auth-plus](https://github.com/sainzs/opencode-anthropic-auth-plus),
-[santiagosainz-skills](https://github.com/sainzs/santiagosainz-skills), and
-[augment-ai-provider](https://github.com/sainzs/augment-ai-provider).
+```bash
+npm install
+npm run verify   # typecheck, unit tests, and a real Chrome + ffmpeg render
+```
+
+The render tests skip themselves when Chrome or ffmpeg is missing. The hero
+above is `node src/cli.mjs assets/hero.json -o assets/hero.gif`.
 
 ## License
 
