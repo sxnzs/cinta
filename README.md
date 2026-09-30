@@ -1,12 +1,14 @@
-# cinta
+<p align="center"><img src="assets/banner.png" alt="cinta — Terminal scripts in, animated GIFs out." width="100%"></p>
 
-[![npm](https://img.shields.io/npm/v/@ssainzs/cinta?color=00ffb2&label=npm)](https://www.npmjs.com/package/@ssainzs/cinta) [![pi](https://img.shields.io/badge/pi-extension-black)](https://github.com/sxnzs/cinta)
+<p align="center"><a href="#install">Install</a> · <a href="#usage">Usage</a> · <a href="#how-it-works">How it works</a> · <a href="#development">Development</a> · <a href="#license">License</a></p>
+
+<p align="center"><a href="https://www.npmjs.com/package/@ssainzs/cinta"><img alt="npm" src="https://img.shields.io/npm/v/@ssainzs/cinta?color=00ffb2&labelColor=000000"></a> <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-00ffb2?labelColor=000000"></a> <img alt="node 20+" src="https://img.shields.io/badge/node-20%2B-00ffb2?labelColor=000000"></p>
 
 Animated terminal-capture GIFs for documentation — from inside pi, or from the
 command line. You (or the agent) write a short terminal script; you get a
 self-typing GIF in your colors and font.
 
-![cinta rendering a demo GIF](./assets/hero.gif)
+![cinta reading a terminal script and rendering a demo GIF](assets/hero.gif)
 
 ## Install
 
@@ -52,7 +54,7 @@ echo '[{"type":"cmd","text":"ls"},{"type":"done"}]' | cinta - -o ls.gif
 Every GIF gets a sibling `.html`: the regenerable source, which also plays the
 animation live when opened in a browser.
 
-## Script
+### Script
 
 | Step | Shape | Renders as |
 |------|-------|------------|
@@ -65,7 +67,7 @@ animation live when opened in a browser.
 
 Output longer than the window scrolls, like a real terminal.
 
-## Options
+### Options
 
 | Option | Default | |
 |--------|---------|---|
