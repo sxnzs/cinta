@@ -22,3 +22,9 @@ test("bad scripts fail with a readable message", () => {
   assert.equal(r.status, 1);
   assert.match(r.stderr, /cinta: step 0: unknown type "nope"/);
 });
+
+test("out-of-range flags are rejected before rendering", () => {
+  const r = run(["-", "--fps", "500"], JSON.stringify([{ type: "done" }]));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /fps must be an integer from 4 to 30/);
+});

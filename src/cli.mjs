@@ -17,7 +17,7 @@ const USAGE = `usage: cinta <script.json | -> [-o out.gif] [--fps n] [--scale px
   script.json   a script array, or { "script": [...], ...options }; - reads stdin
   -o, --out     output GIF path (default: the JSON's "out", else cinta.gif)
   --fps         frames per second, 4–30 (default 12)
-  --scale       output width in px (default 880)
+  --scale       output width in px, 160–2400 (default 880)
 
 Steps: cmd {text} · out {text, cls:"ok"} · stream {lines} · gap · pause {ms} · done
 Needs Chrome (or CINTA_CHROME_PATH) and ffmpeg.`;
@@ -52,14 +52,10 @@ async function main() {
   const [src] = positionals;
   const doc = JSON.parse(src === "-" ? await readStdin() : await readFile(src, "utf8"));
   const { script, ...options } = Array.isArray(doc) ? { script: doc } : doc;
-  const int = (name, v) => {
-    const n = Number(v);
-    if (!Number.isInteger(n) || n <= 0) throw new Error(`--${name} must be a positive integer`);
-    return n;
-  };
+  // Ranges are enforced by renderGif; this only turns the flag text into a number.
   if (values.out) options.out = values.out;
-  if (values.fps) options.fps = int("fps", values.fps);
-  if (values.scale) options.scale = int("scale", values.scale);
+  if (values.fps) options.fps = Number(values.fps);
+  if (values.scale) options.scale = Number(values.scale);
 
   const r = await renderGif(script, options);
   const secs = (r.durationMs / 1000).toFixed(1);

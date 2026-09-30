@@ -19,7 +19,11 @@ test("header text is escaped; sub keeps only formatting tags", () => {
 test("colors and font cannot escape the stylesheet", () => {
   assert.throws(() => buildHtml(tl, { colors: { accent: "red}</style><script>" } }), /colors.accent/);
   assert.throws(() => buildHtml(tl, { font: "x;} body{display:none" }), /font/);
-  assert.doesNotThrow(() => buildHtml(tl, { colors: { accent: "rgb(0, 255, 178)" }, font: '"Iosevka", monospace' }));
+  assert.throws(() => buildHtml(tl, { colors: { bg: "url(https://example.com/)" } }), /colors.bg/);
+  assert.throws(() => buildHtml(tl, { font: "x, url(https://example.com/)" }), /font/);
+  assert.doesNotThrow(() =>
+    buildHtml(tl, { colors: { accent: "rgb(0, 255, 178)", bg: "black", ink: "#eee" }, font: '"Iosevka Term", ui-monospace' }),
+  );
 });
 
 test("the header is omitted when there is nothing to show", () => {

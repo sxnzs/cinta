@@ -60,11 +60,21 @@ export function findChrome() {
   return undefined;
 }
 
-// Colors and the font land inside <style>; refuse anything that could close it.
-function cssValue(name, value) {
-  const s = String(value);
-  if (/[<>{};]/.test(s)) throw new Error(`${name}: invalid CSS value ${JSON.stringify(s)}`);
+// Colors and the font land inside <style>. Accept only plain color and
+// font-family grammar: nothing that closes the rule or loads a url().
+const COLOR = /^(#[0-9a-f]{3,8}|[a-z]+|(rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\))$/i;
+const FONT = /^[\w\s"',.-]+$/;
+function cssValue(name, value, grammar) {
+  const s = String(value).trim();
+  if (!grammar.test(s)) throw new Error(`${name}: invalid CSS value ${JSON.stringify(s)}`);
   return s;
+}
+
+function intIn(name, value, min, max) {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer from ${min} to ${max}, got ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -78,9 +88,9 @@ const escSub = (s) => esc(s).replace(/&lt;(\/?)(b|i|em|strong|code)&gt;/g, "<$1$
  */
 export function buildHtml(timeline, opts = {}) {
   const c = Object.fromEntries(
-    Object.entries({ ...DEFAULTS.colors, ...(opts.colors ?? {}) }).map(([k, v]) => [k, cssValue(`colors.${k}`, v)]),
+    Object.entries({ ...DEFAULTS.colors, ...(opts.colors ?? {}) }).map(([k, v]) => [k, cssValue(`colors.${k}`, v, COLOR)]),
   );
-  const font = cssValue("font", opts.font ?? DEFAULTS.font);
+  const font = cssValue("font", opts.font ?? DEFAULTS.font, FONT);
   const title = opts.title ?? opts.name ?? "";
   const header = opts.name || opts.tag
     ? `<div class="wordmark"><span class="name">${esc(opts.name ?? "")}</span><span class="tag">${esc(opts.tag ?? "")}</span></div>`
@@ -148,10 +158,10 @@ function run(cmd, args, signal) {
  * Returns { gif, html, frames, durationMs, width, height, bytes }.
  */
 export async function renderGif(script, options = {}) {
-  const fps = options.fps ?? DEFAULTS.fps;
-  const scale = options.scale ?? DEFAULTS.scale;
-  const width = options.width ?? DEFAULTS.width;
-  const height = options.height ?? DEFAULTS.height;
+  const fps = intIn("fps", options.fps ?? DEFAULTS.fps, 4, 30);
+  const scale = intIn("scale", options.scale ?? DEFAULTS.scale, 160, 2400);
+  const width = intIn("width", options.width ?? DEFAULTS.width, 320, 2400);
+  const height = intIn("height", options.height ?? DEFAULTS.height, 200, 2400);
   const out = options.out ?? "cinta.gif";
   const signal = options.signal;
   signal?.throwIfAborted();
@@ -164,12 +174,13 @@ export async function renderGif(script, options = {}) {
   if (!chromePath) throw new Error("Chrome not found — install Chrome or set CINTA_CHROME_PATH");
 
   const dir = await mkdtemp(join(tmpdir(), "cinta-"));
-  const browser = await puppeteer.launch({
-    executablePath: chromePath,
-    headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars"],
-  });
+  let browser;
   try {
+    browser = await puppeteer.launch({
+      executablePath: chromePath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars"],
+    });
     const page = await browser.newPage();
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
     const htmlPath = join(dir, "page.html");
@@ -215,7 +226,7 @@ export async function renderGif(script, options = {}) {
       bytes: s.size,
     };
   } finally {
-    await browser.close().catch(() => {});
+    await browser?.close().catch(() => {});
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
